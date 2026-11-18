@@ -15,8 +15,36 @@ function _kderivs(ν::Float64, z::ComplexF64, scaled::Bool, needν::Bool, needz:
     ez = exp(-z)                                   # Re z >= 0 here
     return kx * ez, kxν * ez, (kxz - kx) * ez      # d/dz (e^{-z} Kx) = e^{-z}(Kx' - Kx)
   end
-  needν && return _kderivs_general(complex(ν), z, scaled, needν, needz)
-  # real order, no order derivative: AMOS values, symmetric z-derivative
+  if needν
+    # K and ∂K/∂ν with a real Dual order (K_{-ν} = K_ν, so ∂/∂ν changes sign with ν; at
+    # ν = 0 it vanishes)
+    νd = Dual(abs(ν), sign(ν))
+    x = real(z)
+    done = false
+    K, Kν = zero(z), zero(z)
+    if x > 0 && iszero(imag(z))                    # real arithmetic throughout
+      kr, e, done = _kx_real(νd, x)
+      kd = _assemble_real(kr, e, x, scaled)
+      K, Kν = complex(realpart(kd)), complex(dualpart(kd))
+    elseif x > 0
+      kc, e, done = _kx_real(νd, z)
+      kd = _assemble(kc, e, z, scaled)
+      K, Kν = realpart(kd), dualpart(kd)
+    end
+    if !done
+      kc, _ = _kz_parts(_cplx(νd), z, scaled, false)
+      K, Kν = realpart(kc), dualpart(kc)
+    end
+    needz || return K, Kν, zero(K)
+    _, Kz, ok = _amos_kz(ν, z, scaled)
+    ok && return K, Kν, Kz
+    return K, Kν, _kz_parts(complex(abs(ν)), z, scaled, true)[2]
+  end
+  # real order, no order derivative: AMOS values, symmetric z-derivative from one call
+  if needz
+    k, kz, ok = _amos_kz(ν, z, scaled)
+    ok && return k, zero(k), kz
+  end
   f = scaled ? besselkx : besselk
   k = f(ν, z)
   needz || return k, zero(k), zero(k)

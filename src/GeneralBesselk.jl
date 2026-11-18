@@ -3,6 +3,7 @@ module GeneralBesselk
 export besselk, besselkx, besselk_v, besselkx_v
 
 using DualNumbers, SpecialFunctions
+using OpenSpecFun_jll: libopenspecfun
 import SpecialFunctions: besselk, besselkx
 
 const MAXITERS = 2^14
@@ -18,6 +19,8 @@ include("series.jl")
 include("asym.jl")
 include("fastasym.jl")
 include("core.jl")
+include("amos.jl")
+include("realpath.jl")
 include("derivs.jl")
 
 end # module GeneralBesselk

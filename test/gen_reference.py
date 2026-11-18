@@ -46,3 +46,24 @@ def gen_fast(n=500):
                 float(nu), z.real, z.imag, float(kx.real), float(kx.imag), float(dkx.real), float(dkx.imag)))
         f.write("]\n")
 gen_fast()
+
+# reference_real.jl: real orders at small and moderate |z|, any angle, with ∂K/∂ν and ∂K/∂z
+def gen_real(n=400):
+    random.seed(777)
+    mp.mp.dps = 30
+    with open("reference_real.jl", "w") as f:
+        f.write("const REFERENCE_REAL = [\n")
+        for i in range(n):
+            nu = random.choice([0.0, 0.5, 1.0, 2.0, random.randint(-12, 12), random.uniform(-3, 3), random.uniform(-40, 40)])
+            r = math.exp(random.uniform(math.log(0.03), math.log(60)))
+            th = random.choice([0.0, random.uniform(-0.5, 0.5), random.uniform(-0.99, 0.99)]) * math.pi
+            z = cmath.rect(r, th)
+            w = mp.mpc(z)
+            K = mp.besselk(nu, w)
+            Kn = mp.diff(lambda v: mp.besselk(v, w), nu)
+            Kz = -(mp.besselk(nu - 1, w) + mp.besselk(nu + 1, w)) / 2
+            f.write("  (%r, complex(%r, %r), complex(%r, %r), complex(%r, %r), complex(%r, %r)),\n" % (
+                float(nu), z.real, z.imag, float(K.real), float(K.imag), float(Kn.real), float(Kn.imag),
+                float(Kz.real), float(Kz.imag)))
+        f.write("]\n")
+gen_real()

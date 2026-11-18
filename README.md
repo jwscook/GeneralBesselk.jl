@@ -49,6 +49,16 @@ with the number of partials. ∂K/∂ν is carried through the algorithm by a du
 ∂K/∂z uses the symmetric form above. On the large-|z| fast path, both come in closed form
 from the Hankel coefficients.
 
+For real orders away from the fast path, the core avoids running the general complex
+algorithm:
+
+* **∂/∂z:** a single AMOS call returns the whole sequence K_{ν−1}, K_ν, K_{ν+1}
+  (SpecialFunctions requests one value at a time).
+* **∂/∂ν:** the algorithm runs with a real `Dual{Float64}` order. With real x this is
+  entirely real arithmetic, and with complex z the order-dependent quantities stay real.
+* **Other cases:** for Re z < 0, or if an error estimate is poor, the general complex
+  path takes over.
+
 * **DualNumbers** (a dependency): `Dual` orders and/or arguments, real or complex.
 * **ForwardDiff** (extension, loaded with `using ForwardDiff`): `ForwardDiff.Dual` or
   `Complex{<:ForwardDiff.Dual}` orders and/or arguments, with any number of partials and
@@ -123,7 +133,9 @@ including points within 1e-12 of the branch cut):
 * median relative error ~1e-15, 99th percentile ~1e-13, for values, ∂K/∂z and ∂K/∂ν;
 * real orders agree with SpecialFunctions (AMOS) to ~1e-13;
 * the large-|z| real-order fast path: values ~1e-15 and z-derivatives ~1e-14 against
-  mpmath (500 stored points in `test/reference_fast.jl`).
+  mpmath (500 stored points in `test/reference_fast.jl`);
+* real-order derivatives at small and moderate |z|, at all angles: ∂K/∂ν within ~2e-13
+  and ∂K/∂z within ~6e-14 of mpmath (1200 points, 400 stored in `test/reference_real.jl`).
 
 **Limitation:** about 0.3% of those random points lose accuracy. All of them combine
 |Im ν| ≳ 8, z in the left half-plane near the imaginary axis, and |z| ≳ 30, where every
@@ -132,15 +144,23 @@ complete loss of accuracy at the extremes (|Im ν| ≈ 20–30, |z| ≈ 80–150
 
 ## Cost
 
-Calls don't allocate. On the 3000-point random set the median is ~1.3 μs (~3 μs with a
-Dual order or argument), the 99th percentile ~20 μs (~60 μs), and the maximum ~30 μs
-(~95 μs). Iteration counts are capped, so no input can trigger an unbounded or
+Calls don't allocate. On the 3000-point random set (mostly complex orders) the median
+is ~1.2 μs (~2.6 μs with a Dual order or argument), the 99th percentile ~16 μs (~35–45 μs),
+and the maximum ~21 μs (~50–65 μs). Iteration counts are capped, so no input can trigger an unbounded or
 arbitrary-precision computation.
 
-Derivatives (any AD interface, no allocations, independent of the number of partials):
-~70–110 ns on the fast path. Elsewhere, ~2 μs for ∂/∂z (three value evaluations) and
-~6–9 μs when ∂/∂ν is needed, since the order derivative runs the general algorithm with a
-dual order.
+Derivatives through any AD interface: no allocations, and the cost doesn't depend on the
+number of partials. For example, at z = 3 (real x) or z = 3 + 0.5i (complex z), with
+ν = 2.3, or ν = 2.3 + 0.7i in the complex-order column:
+
+| | real order, real x | real order, complex z | complex order |
+|---|---|---|---|
+| value | 0.7 μs (AMOS) | 0.9 μs (AMOS) | 1.5 μs |
+| ∂/∂z | 0.7 μs | 0.9 μs | 3.0 μs |
+| ∂/∂ν | 1.1 μs | 3.4 μs | 5.4 μs |
+| ∂/∂ν and ∂/∂z | 1.8 μs | 4.2 μs | 7.2 μs |
+
+On the large-|z| fast path, any of these takes ~70–125 ns.
 
 On the fast path (real order, |z| ≳ 22, Re z ≥ 0): ~45–55 ns for a value and ~65–90 ns
 with a Dual argument, against ~300–550 ns and ~1.1–1.4 μs through AMOS. Its values agree

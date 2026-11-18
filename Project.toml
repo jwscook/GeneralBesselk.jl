@@ -5,6 +5,7 @@ authors = ["James Cook <cookjws@gmail.com>"]
 
 [deps]
 DualNumbers = "fa6b7ba4-c1ee-5f82-b5fc-ecf0adba8f74"
+OpenSpecFun_jll = "efe28fd5-8261-553b-a9e1-b2916fc3738e"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 
 [weakdeps]

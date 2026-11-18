@@ -74,6 +74,18 @@ end
 # |value| as a plain float (used for error estimates)
 _absv(x) = _l1(_val(x))
 
+# 1/x without the scaling and branches of Base's robust complex division: conj(x)/|x|²,
+# falling back to inv(x) when |x|² is near the ends of the Float64 range
+@inline function _finv(x::Complex{Float64})
+  s = abs2(x)
+  return (1e-290 < s < 1e290) ? conj(x) * inv(s) : inv(x)
+end
+@inline _finv(x::Real) = inv(x)
+@inline function _finv(x::Dual)
+  r = _finv(realpart(x))
+  return Dual(r, -dualpart(x) * (r * r))
+end
+
 # log Γ for Dual arguments (SpecialFunctions has none)
 _loggamma(x) = loggamma(x)
 _loggamma(x::Dual) = Dual(loggamma(realpart(x)), digamma(realpart(x)) * dualpart(x))

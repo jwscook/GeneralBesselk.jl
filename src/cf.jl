@@ -7,7 +7,7 @@
 const STEED_MAXITERS = 400   # converged cases need ≲150; failures fall through to other methods
 function _steed(μ, z, tol)
   b = 2 * (1 + z)
-  d = inv(b)
+  d = _finv(b)
   h = delh = d
   q1 = zero(d)
   q2 = one(d)
@@ -19,13 +19,13 @@ function _steed(μ, z, tol)
   conv = false
   for i in 2:STEED_MAXITERS
     a -= 2 * (i - 1)
-    c = -a * c / i
-    qnew = (q1 - b * q2) / a
+    c = c * (a * (-1.0 / i))
+    qnew = (q1 - b * q2) * _finv(a)
     q1 = q2
     q2 = qnew
     q += c * qnew
     b += 2
-    d = inv(b + a * d)
+    d = _finv(b + a * d)
     delh = (b * d - 1) * delh
     h += delh
     dels = q * delh
@@ -64,8 +64,8 @@ function _cf1_ratio(ν, w, tol)
     b = (ν + k) * iw2
     D = b + D
     iszero(_val(D)) && (D = tiny + zero(D))
-    D = inv(D)
-    C = b + inv(C)
+    D = _finv(D)
+    C = b + _finv(C)
     iszero(_val(C)) && (C = tiny + zero(C))
     Δ = C * D
     f *= Δ

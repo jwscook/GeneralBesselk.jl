@@ -9,6 +9,8 @@ Random.seed!(0)
 include("reference_values.jl")
 # (ν, z, e^z K_ν(z), d/dz e^z K_ν(z)) for real ν, large |z|, from mpmath
 include("reference_fast.jl")
+# (ν, z, K, ∂K/∂ν, ∂K/∂z) for real ν, small and moderate |z|, any angle, from mpmath
+include("reference_real.jl")
 
 @testset "GeneralBesselk" begin
   @testset "complex order vs mpmath" begin
@@ -207,6 +209,25 @@ include("reference_fast.jl")
     @test besselk(Dual(1.5, 1.0), -2.0 + 0im) isa Dual{ComplexF64}
     @test (@inferred besselk_v([0.3 + 0.4im, 1.0 + 2im], 1.0 + 1im)) isa Vector{ComplexF64}
     @test (@inferred besselk_v([Dual(0.3, 1.0)], 1.0)) isa Vector{Dual{Float64}}
+  end
+
+  @testset "real order derivatives vs mpmath" begin
+    for (ν, z, K, Kν, Kz) in REFERENCE_REAL
+      k, kν, kz = G._kderivs(ν, z, false, true, true)
+      @test k ≈ K rtol = 1e-13
+      @test abs(kν - Kν) <= 1e-12 * abs(Kν) + 1e-15 * abs(K)
+      @test kz ≈ Kz rtol = 1e-12
+      # public routes
+      @test dualpart(besselk(Dual(ν, 1.0), z)) ≈ kν
+      @test dualpart(besselk(ν, Dual(z, one(z)))) ≈ kz
+      r = besselk(FD.Dual(ν, 1.0, 0.0), complex(FD.Dual(real(z), 0.0, 1.0), FD.Dual(imag(z), 0.0, 0.0)))
+      @test complex(FD.partials(real(r), 1), FD.partials(imag(r), 1)) ≈ kν
+      @test complex(FD.partials(real(r), 2), FD.partials(imag(r), 2)) ≈ kz
+      if iszero(imag(z)) && real(z) > 0
+        @test besselk(Dual(ν, 1.0), real(z)) isa Dual{Float64}
+        @test dualpart(besselk(Dual(ν, 1.0), real(z))) ≈ real(kν)
+      end
+    end
   end
 
   @testset "ForwardDiff" begin
