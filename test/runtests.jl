@@ -1,5 +1,8 @@
 using DualNumbers, GeneralBesselk, Random, SpecialFunctions, Test
+import ChainRulesCore, ForwardDiff
 const G = GeneralBesselk
+const FD = ForwardDiff
+const CRC = ChainRulesCore
 Random.seed!(0)
 
 # (ν, z, K_ν(z), ∂K_ν(z)/∂ν) from mpmath at 40 digits
@@ -204,6 +207,116 @@ include("reference_fast.jl")
     @test besselk(Dual(1.5, 1.0), -2.0 + 0im) isa Dual{ComplexF64}
     @test (@inferred besselk_v([0.3 + 0.4im, 1.0 + 2im], 1.0 + 1im)) isa Vector{ComplexF64}
     @test (@inferred besselk_v([Dual(0.3, 1.0)], 1.0)) isa Vector{Dual{Float64}}
+  end
+
+  @testset "ForwardDiff" begin
+    ext = Base.get_extension(GeneralBesselk, :GeneralBesselkForwardDiffExt)
+    @test ext !== nothing
+    @test isempty(Test.detect_ambiguities(ext; recursive = true))
+    # complex order: two partials (Re ν, Im ν); K is holomorphic in ν, so
+    # ∂/∂Re ν = ∂K/∂ν and ∂/∂Im ν = i ∂K/∂ν (mpmath)
+    for (ν, z, K, dK) in REFERENCE[1:4:end]
+      νd = complex(FD.Dual(real(ν), 1.0, 0.0), FD.Dual(imag(ν), 0.0, 1.0))
+      r = besselk(νd, z)
+      v = complex(FD.value(real(r)), FD.value(imag(r)))
+      d1 = complex(FD.partials(real(r), 1), FD.partials(imag(r), 1))
+      d2 = complex(FD.partials(real(r), 2), FD.partials(imag(r), 2))
+      @test v ≈ K rtol = 1e-12
+      @test abs(d1 - dK) <= 1e-9 * abs(dK) + 1e-13 * abs(K)
+      @test abs(d2 - im * dK) <= 1e-9 * abs(dK) + 1e-13 * abs(K)
+    end
+    # complex argument, real order: ∂/∂Re z = dKx/dz and ∂/∂Im z = i dKx/dz (mpmath)
+    for (ν, z, kx, dkx) in REFERENCE_FAST[1:5:end]
+      zd = complex(FD.Dual(real(z), 1.0, 0.0), FD.Dual(imag(z), 0.0, 1.0))
+      r = besselkx(ν, zd)
+      @test complex(FD.value(real(r)), FD.value(imag(r))) ≈ kx rtol = 5e-14   # AMOS where the fast path declines
+      @test complex(FD.partials(real(r), 1), FD.partials(imag(r), 1)) ≈ dkx rtol = 1e-13
+      @test complex(FD.partials(real(r), 2), FD.partials(imag(r), 2)) ≈ im * dkx rtol = 1e-13
+    end
+    # real order and argument: ∂/∂ν (ForwardDiff alone gives NaN) and ∂/∂z, against
+    # central differences
+    cd(f, x, h = 1e-6) = (f(x + h) - f(x - h)) / 2h
+    for ν in (0.0, 0.3, 1.5, 2.0, 7.25, -3.6), x in (0.05, 0.9, 3.0, 30.0)
+      for f in (besselk, besselkx)
+        gν = FD.derivative(v -> f(v, x), ν)
+        gz = FD.derivative(y -> f(ν, y), x)
+        @test isfinite(gν) && isfinite(gz)
+        @test gν ≈ cd(v -> f(v, x), ν) rtol = 1e-6 atol = 1e-8 * abs(f(ν, x))
+        @test gz ≈ cd(y -> f(ν, y), x) rtol = 1e-6
+        @test FD.gradient(p -> f(p[1], p[2]), [ν, x]) ≈ [gν, gz]
+      end
+    end
+    # several partials through one call, with both inputs dual
+    p = [1.2, 0.4, 2.0, -0.7]
+    J = FD.jacobian(q -> (r = besselk(complex(q[1], q[2]), complex(q[3], q[4]));
+                          [real(r), imag(r)]), p)
+    ν, z = complex(p[1], p[2]), complex(p[3], p[4])
+    Kν = dualpart(besselk(Dual(ν, one(ν)), z))
+    Kz = -(besselk(ν - 1, z) + besselk(ν + 1, z)) / 2
+    @test complex(J[1, 1], J[2, 1]) ≈ Kν
+    @test complex(J[1, 2], J[2, 2]) ≈ im * Kν
+    @test complex(J[1, 3], J[2, 3]) ≈ Kz
+    @test complex(J[1, 4], J[2, 4]) ≈ im * Kz
+    # nested: second z-derivative, K'' = (K_{ν-2} + 2K_ν + K_{ν+2})/4
+    for (ν, x) in ((2.3, 3.0), (0.4, 40.0))
+      @test FD.derivative(y -> FD.derivative(t -> besselk(ν, t), y), x) ≈
+        (besselk(ν - 2, x) + 2besselk(ν, x) + besselk(ν + 2, x)) / 4 rtol = 1e-12
+    end
+    z0 = 2.0 + 1.0im
+    h2 = FD.derivative(y -> (r = FD.derivative(t -> besselk(1.5 + 0.5im, complex(t, imag(z0))), y);
+                             r), real(z0))
+    @test h2 ≈ (besselk(-0.5 + 0.5im, z0) + 2besselk(1.5 + 0.5im, z0) + besselk(3.5 + 0.5im, z0)) / 4 rtol = 1e-11
+    # nested, mixed: ∂²K/∂z∂ν = ∂/∂ν (-(K_{ν-1} + K_{ν+1})/2)
+    mixed = FD.derivative(y -> FD.derivative(v -> besselk(v, y), 2.3), 3.0)
+    @test mixed ≈ -dualpart(besselk(Dual(1.3, 1.0), 3.0) + besselk(Dual(3.3, 1.0), 3.0)) / 2 rtol = 1e-10
+    # mixed with a complex argument, and third order: ∂³K/∂z²∂ν
+    zz = 2.0 + 1.0im
+    m2 = FD.derivative(y -> FD.derivative(v -> besselk(v, complex(y, imag(zz))), 1.3), real(zz))
+    @test m2 ≈ -dualpart(besselk(Dual(0.3, 1.0), zz) + besselk(Dual(2.3, 1.0), zz)) / 2 rtol = 1e-10
+    m3 = FD.derivative(x -> FD.derivative(y -> FD.derivative(v -> besselk(v, y), 2.3), x), 3.0)
+    @test m3 ≈ dualpart(besselk(Dual(0.3, 1.0), 3.0) + 2besselk(Dual(2.3, 1.0), 3.0) +
+                         besselk(Dual(4.3, 1.0), 3.0)) / 4 rtol = 1e-9
+    # ∂²K/∂ν² is not available
+    @test_throws ArgumentError FD.derivative(u -> FD.derivative(v -> besselk(complex(v), 2.0 + 1im), u), 1.3)
+    # types
+    νf = FD.Dual{Nothing}(2.3, 1.0, 0.0)
+    zf = complex(FD.Dual{Nothing}(3.0, 0.0, 1.0), FD.Dual{Nothing}(0.5, 0.0, 0.0))
+    for f in (besselk, besselkx), (ν, z) in ((νf, zf), (νf, 3.0), (νf, 3.0 + 1im), (2.3, zf),
+        (2, zf), (2.3 + 1im, zf), (2.3 + 1im, FD.Dual(3.0, 1.0)), (complex(νf, νf), 3.0),
+        (complex(νf, νf), zf), (νf, FD.Dual{Nothing}(3.0, 1.0, 1.0)), (2.3, FD.Dual(3.0, 1.0)))
+      @test (@inferred f(ν, z)) isa Union{FD.Dual,Complex{<:FD.Dual}}
+    end
+    @test besselk(νf, 3.0) isa FD.Dual{Nothing,Float64,2}
+    @test_throws DomainError besselk(νf, -3.0)
+    @test besselk(νf, -3.0 + 0im) isa Complex{FD.Dual{Nothing,Float64,2}}
+  end
+
+  @testset "ChainRulesCore" begin
+    @test Base.get_extension(GeneralBesselk, :GeneralBesselkChainRulesCoreExt) !== nothing
+    ν, z = 1.2 + 0.4im, 2.0 - 0.7im
+    Kν = dualpart(besselk(Dual(ν, one(ν)), z))
+    for (f, scaled) in ((besselk, false), (besselkx, true))
+      K = f(ν, z)
+      Kz = -(f(ν - 1, z) + f(ν + 1, z)) / 2 + (scaled ? K : 0)
+      Kνf = scaled ? exp(z) * Kν : Kν
+      y, ẏ = CRC.frule((CRC.NoTangent(), 0.3 - 0.1im, 0.2 + 0.5im), f, ν, z)
+      @test y ≈ K && ẏ ≈ Kνf * (0.3 - 0.1im) + Kz * (0.2 + 0.5im)
+      y, ẏ = CRC.frule((CRC.NoTangent(), CRC.ZeroTangent(), 1.0), f, ν, z)
+      @test ẏ ≈ Kz
+      y, back = CRC.rrule(f, ν, z)
+      @test y ≈ K
+      _, gν, gz = back(1.0 + 0im)
+      @test gν ≈ conj(Kνf) && gz ≈ conj(Kz)
+    end
+    # real inputs: real cotangents, matching ForwardDiff
+    for (f, ν, x) in ((besselk, 2.3, 3.0), (besselkx, 0.5, 40.0))
+      y, back = CRC.rrule(f, ν, x)
+      _, gν, gx = back(1.0)
+      @test y isa Float64 && gν isa Float64 && gx isa Float64
+      @test gν ≈ FD.derivative(v -> f(v, x), ν) && gx ≈ FD.derivative(t -> f(ν, t), x)
+    end
+    # this package's rule takes precedence over SpecialFunctions' (which has no ∂/∂ν)
+    @test isfinite(CRC.rrule(besselk, 2.3, 3.0)[2](1.0)[2])
   end
 
   @testset "edge cases" begin

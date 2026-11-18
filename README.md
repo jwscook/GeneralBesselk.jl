@@ -6,6 +6,8 @@ The modified Bessel function of the second kind, `besselk(ν, z)`, and its scale
 * **complex orders** `ν` (SpecialFunctions/AMOS only does real orders),
 * **`DualNumbers.Dual` orders**: ∂K/∂ν is carried through the algorithm,
 * **`DualNumbers.Dual` arguments**: ∂K/∂z = −(K_{ν−1} + K_{ν+1})/2,
+* **ForwardDiff** and **ChainRulesCore** (Zygote, Diffractor, …), differentiable in both
+  the order and the argument, through package extensions,
 
 in any combination, for complex `z` anywhere on the principal branch (|arg z| < π).
 It is the `besselk` counterpart of
@@ -19,6 +21,9 @@ besselkx(0.3 + 4im, -3.0 + 1im)         # scaled, left half plane
 besselk(Dual(2.5, 1.0), 3.0)            # value and ∂K/∂ν (a real Dual)
 besselk(1.2 + 1im, Dual(2.0 + 0im, 1))  # value and ∂K/∂z
 besselk_v([0.5 + 1im, -0.5 - 1im], 2.0) # many orders at one z
+
+using ForwardDiff
+ForwardDiff.gradient(p -> besselk(p[1], p[2]), [2.3, 3.0])  # ∂K/∂ν and ∂K/∂x
 ```
 
 ## Types
@@ -34,6 +39,32 @@ tests. Computation is in `Float64`, and the result type depends only on the argu
 Real (non-Dual) orders go to SpecialFunctions, except at large |z| (see below). This
 includes a complex `ν` with zero imaginary part. On the negative real axis the sign of
 `imag(z)`, including a signed zero, picks the side of the cut.
+
+## Automatic differentiation
+
+Every AD interface shares one `Float64` core that returns K, ∂K/∂ν and ∂K/∂z at the point,
+computing only the ones that are needed. All first derivatives follow from those two by
+the chain rule, dK = ∂K/∂ν dν + ∂K/∂z dz (K is analytic in z), so the cost doesn't grow
+with the number of partials. ∂K/∂ν is carried through the algorithm by a dual order, and
+∂K/∂z uses the symmetric form above. On the large-|z| fast path, both come in closed form
+from the Hankel coefficients.
+
+* **DualNumbers** (a dependency): `Dual` orders and/or arguments, real or complex.
+* **ForwardDiff** (extension, loaded with `using ForwardDiff`): `ForwardDiff.Dual` or
+  `Complex{<:ForwardDiff.Dual}` orders and/or arguments, with any number of partials and
+  correct handling of tags.
+  * **Nested differentiation:** derivatives of any order in z work, and so do mixed
+    derivatives with a single ν (e.g. ∂²K/∂z∂ν, ∂³K/∂z²∂ν), because each one is again a
+    combination of `besselk` calls. ∂²K/∂ν² throws an `ArgumentError`.
+  * **Real order and argument:** ForwardDiff already defines `besselk` for its real
+    Duals, with ∂/∂ν = `NaN`, and those methods can't be redefined. This package adds more
+    specific methods for Duals with float values. Those are what `ForwardDiff.derivative`,
+    `gradient` and `jacobian` produce, so ∂/∂ν is correct. Nested real-real Duals keep
+    ForwardDiff's rule.
+* **ChainRulesCore** (extension): `frule` and `rrule` for `besselk(ν, z)` and
+  `besselkx(ν, z)` with `Float64`/`ComplexF64` inputs, differentiable in both. These are
+  more specific than SpecialFunctions' rules, which treat ν as non-differentiable, so they
+  take precedence without overwriting them. Real inputs get real cotangents.
 
 ## Method
 
@@ -105,6 +136,11 @@ Calls don't allocate. On the 3000-point random set the median is ~1.3 μs (~3 μ
 Dual order or argument), the 99th percentile ~20 μs (~60 μs), and the maximum ~30 μs
 (~95 μs). Iteration counts are capped, so no input can trigger an unbounded or
 arbitrary-precision computation.
+
+Derivatives (any AD interface, no allocations, independent of the number of partials):
+~70–110 ns on the fast path. Elsewhere, ~2 μs for ∂/∂z (three value evaluations) and
+~6–9 μs when ∂/∂ν is needed, since the order derivative runs the general algorithm with a
+dual order.
 
 On the fast path (real order, |z| ≳ 22, Re z ≥ 0): ~45–55 ns for a value and ~65–90 ns
 with a Dual argument, against ~300–550 ns and ~1.1–1.4 μs through AMOS. Its values agree

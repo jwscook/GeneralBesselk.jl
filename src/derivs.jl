@@ -9,7 +9,7 @@
 
 function _kderivs(ν::Float64, z::ComplexF64, scaled::Bool, needν::Bool, needz::Bool)
   # large |z|: everything from one fixed-length Hankel series
-  kx, kxν, kxz, ok = _kx_fast_dν(ν, z)
+  kx, kxν, kxz, ok = needν ? _kx_fast_dν(ν, z) : _kx_fast_nodν(ν, z, needz)
   if ok
     scaled && return kx, kxν, kxz
     ez = exp(-z)                                   # Re z >= 0 here
@@ -22,6 +22,11 @@ function _kderivs(ν::Float64, z::ComplexF64, scaled::Bool, needν::Bool, needz:
   needz || return k, zero(k), zero(k)
   kz = -(f(ν - 1, z) + f(ν + 1, z)) / 2
   return k, zero(k), scaled ? kz + k : kz
+end
+
+@inline function _kx_fast_nodν(ν::Float64, z::ComplexF64, needz::Bool)
+  kx, kxz, ok = needz ? _kx_fast(ν, z, Val(true)) : _kx_fast(ν, z, Val(false))
+  return kx, zero(kx), kxz, ok
 end
 
 function _kderivs(ν::ComplexF64, z::ComplexF64, scaled::Bool, needν::Bool, needz::Bool)
