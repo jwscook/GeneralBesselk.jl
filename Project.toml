@@ -1,0 +1,20 @@
+name = "GeneralBesselk"
+uuid = "b44da8cd-136e-47b7-afad-4c9f3e2d2faa"
+version = "0.1.0"
+authors = ["James Cook <cookjws@gmail.com>"]
+
+[deps]
+DualNumbers = "fa6b7ba4-c1ee-5f82-b5fc-ecf0adba8f74"
+SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
+
+[compat]
+DualNumbers = "0.6"
+SpecialFunctions = "2"
+julia = "1.9"
+
+[extras]
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Random", "Test"]
