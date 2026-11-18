@@ -4,7 +4,8 @@
 # Exact for non-integer ν on the principal branch. It cancels catastrophically near integer
 # orders and for large |z| (handled by the other methods), but it is the accurate route
 # for small |z| when K_ν is recessive under forward recurrence (large |Im ν|, z off the
-# positive real axis). Returns the *unscaled* (K_ν, K_{ν+1}) and an error estimate.
+# positive real axis). Returns the *unscaled* (K_ν, K_{ν+1}) as mantissas, an error
+# estimate and a common power-of-two exponent.
 
 # Σ_k m^k / (k! (b)_k) and Σ_k |term_k|
 function _0f1_abs(b, m, tol)
@@ -25,43 +26,28 @@ function _kseries1(ν, L, m, lsin, tol)
   # A = π/(2 sin νπ) I_{-ν},  B = π/(2 sin νπ) I_ν
   la = log(π / 2) - lsin - ν * L - _loggamma(1 - ν)
   lb = log(π / 2) - lsin + ν * L - _loggamma(1 + ν)
+  # split a large common magnitude off as 2^ex so exp neither overflows nor underflows
+  big = max(real(_val(la)), real(_val(lb)))
+  ex = abs(big) > 500 ? round(Int, big / log(2.0)) : 0
+  sh = ex * log(2.0)
   Sa, sa = _0f1_abs(1 - ν, m, tol)
   Sb, sb = _0f1_abs(1 + ν, m, tol)
-  A = exp(la) * Sa
-  B = exp(lb) * Sb
+  A = exp(la - sh) * Sa
+  B = exp(lb - sh) * Sb
   k = A - B
   # rounding in the series, in exp of a large exponent, and cancellation in A - B
   ea = sa / _absv(Sa) + _absv(la)
   eb = sb / _absv(Sb) + _absv(lb)
   est = (_absv(A) * ea + _absv(B) * eb) / _absv(k)
-  return k, isnan(est) ? Inf : est
+  return k, isnan(est) ? Inf : est, ex
 end
 
 function _kseries(ν, z, tol, pair::Bool)
   L = log(z / 2)
   m = (z / 2)^2
-  k0, e0 = _kseries1(ν, L, m, _logsinpi(ν), tol)
-  pair || return k0, k0, e0
-  k1, e1 = _kseries1(ν + 1, L, m, _logsinpi(ν + 1), tol)
-  return k0, k1, max(e0, e1)
-end
-
-# The direct series in BigFloat. The precision starts from the cancellation estimated in
-# double precision (est, in units of eps) and is raised until the estimate made at the
-# working precision (which, unlike the double one, is not saturated by rounding) shows
-# the result is good to ~2^-60. Returns scaled values in double.
-function _kxseries_big(ν, z, pair::Bool, est)
-  bits = 53 + ceil(Int, log2(max(est, 1.0))) + 40
-  local res
-  for _ in 1:8
-    res, ok, ebig = setprecision(BigFloat, bits) do
-      νb, zb = _tobig(ν), _tobig(z)
-      k0, k1, e = _kseries(νb, zb, eps(Float64) / 4, pair)
-      ez = exp(zb)
-      (_to64(k0 * ez), _to64(k1 * ez), 1.0), e * eps(BigFloat) < 2.0^-60, e
-    end
-    ok && return res
-    bits = max(2bits, 60 + ceil(Int, log2(max(ebig, 1.0))) + 40)
-  end
-  return (res[1], res[2], Inf)
+  k0, e0, x0 = _kseries1(ν, L, m, _logsinpi(ν), tol)
+  pair || return k0, k0, e0, x0
+  k1, e1, x1 = _kseries1(ν + 1, L, m, _logsinpi(ν + 1), tol)
+  x = max(x0, x1)
+  return _ldexp(k0, x0 - x), _ldexp(k1, x1 - x), max(e0, e1), x
 end

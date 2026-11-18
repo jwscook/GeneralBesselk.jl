@@ -5,8 +5,9 @@
 _val(x) = x
 _val(x::Dual) = realpart(x)
 
-_cplx(x) = complex(float(x))
-_cplx(x::Dual) = Dual(complex(float(realpart(x))), complex(float(dualpart(x))))
+# all computation is in Float64
+_cplx(x) = ComplexF64(x)
+_cplx(x::Dual) = Dual(ComplexF64(realpart(x)), ComplexF64(dualpart(x)))
 
 # cheap norm |re| + |im| (within √2 of abs; no hypot in the inner loops)
 _l1(x::Real) = abs(x)
@@ -89,53 +90,15 @@ function _logsinpi(ν)
   end
 end
 
-# ---- BigFloat support for the high-precision fallback ----
+# x * 2^e, componentwise, so it overflows to ±Inf / underflows to 0 without NaN
+_ldexp(x::Real, e::Int) = ldexp(x, e)
+_ldexp(x::Complex, e::Int) = complex(ldexp(real(x), e), ldexp(imag(x), e))
+_ldexp(x::Dual, e::Int) = Dual(_ldexp(realpart(x), e), _ldexp(dualpart(x), e))
 
-# Bernoulli numbers B_2, B_4, ..., B_{2n} (Akiyama–Tanigawa), cached
-const _BERNOULLI = Rational{BigInt}[]
-function _bernoulli_even(n)
-  length(_BERNOULLI) >= n && return _BERNOULLI
-  N = 2n
-  a = Vector{Rational{BigInt}}(undef, N + 1)
-  B = Vector{Rational{BigInt}}(undef, N + 1)
-  for m in 0:N
-    a[m+1] = 1 // big(m + 1)
-    for j in m:-1:1
-      a[j] = j * (a[j] - a[j+1])
-    end
-    B[m+1] = a[1]                      # B_m (with B_1 = +1/2, unused)
-  end
-  empty!(_BERNOULLI)
-  append!(_BERNOULLI, B[3:2:end])
-  return _BERNOULLI
+# (x, e) -> (x * 2^-m, e + m) with the mantissa of order one (no-op for 0, Inf, NaN)
+function _normalise(x, e::Int)
+  a = _absv(x)
+  (iszero(a) || !isfinite(a)) && return x, e
+  m = exponent(a)
+  return _ldexp(x, -m), e + m
 end
-
-# ψ(z) for Complex{BigFloat}: shift to large Re z, then the asymptotic series
-#   ψ(z) ~ log z - 1/(2z) - Σ_k B_{2k} / (2k z^{2k})
-function _digamma_big(z::Complex{BigFloat})
-  p = precision(BigFloat)
-  shift = zero(z)
-  while real(z) < p / 2
-    shift -= inv(z)
-    z += 1
-  end
-  B = _bernoulli_even(60)
-  iz² = inv(z * z)
-  s = zero(z)
-  zk = one(z)
-  tol = eps(BigFloat)
-  for k in 1:60
-    zk *= iz²
-    t = B[k] / (2k) * zk
-    s += t
-    abs(t) <= tol * abs(s) && break
-  end
-  return shift + log(z) - inv(2z) - s
-end
-_loggamma(x::Dual{Complex{BigFloat}}) =
-  Dual(loggamma(realpart(x)), _digamma_big(realpart(x)) * dualpart(x))
-
-_tobig(x::Complex) = Complex{BigFloat}(x)
-_tobig(x::Dual) = Dual(_tobig(realpart(x)), _tobig(dualpart(x)))
-_to64(x::Complex) = ComplexF64(x)
-_to64(x::Dual) = Dual(_to64(realpart(x)), _to64(dualpart(x)))

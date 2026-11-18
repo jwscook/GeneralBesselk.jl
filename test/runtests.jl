@@ -101,10 +101,62 @@ include("reference_values.jl")
       (besselk(ν + h, z) - besselk(ν - h, z)) / 2h rtol = 1e-7
   end
 
-  @testset "hard cases use the BigFloat fallback correctly" begin
-    # large |Im ν|, z near the imaginary axis in the left half plane, large |z|
-    ν, z = 3.3967753376286183 + 19.82808237016364im, -11.170138958251217 + 147.42661384800755im
-    @test besselk(ν, z) ≈ -9985.07898913385437987700531429 - 7735.7127845610428113410155245im rtol = 1e-12
+  @testset "recessive K: forward recurrence unstable, direct series chosen" begin
+    # large |Im ν|, z in the left half plane near the imaginary axis (mpmath values)
+    ν, z = 2.2938420186840323 + 38.9968051490219im, -1.0639458484627917 + 2.974619693153284im
+    @test besselk(ν, z) ≈ -194162554.209400323105638765367 + 92645341.8725884190695375764002im rtol = 1e-12
+    ν, z = 11.795042701406187 - 7.521244633798166im, -0.20722034040980836 + 0.128876585942133im
+    @test besselk(ν, z) ≈ -149025056.9685776846982098317562816668779 - 199513358.3121503187519713348019283715096im rtol = 1e-12
+  end
+
+  @testset "symmetric derivative in z" begin
+    # real order and argument: -(K_{ν-1} + K_{ν+1})/2 has no cancellation
+    for ν in (0.3 + 0.0001im, 5.5 + 1e-3im, 20.2 + 0.5im), x in (0.05, 1.0, 10.0)
+      d = dualpart(besselk(ν, Dual(complex(x), 1.0 + 0im)))
+      @test d ≈ -(besselk(ν - 1, x) + besselk(ν + 1, x)) / 2 rtol = 1e-13
+    end
+    # K_{ν-1} in a harder regime than K_ν, K_{ν+1}: falls back to (ν/z)K_ν - K_{ν+1}
+    ν, z = -0.955561850644782 - 8.229566433395934im, -5.6398676012624795 - 56.92530386591847im
+    @test dualpart(besselk(ν, Dual(z, one(z)))) ≈
+      -35.1327599999145036156464386303 - 25.2908130070246816839240039184im rtol = 1e-10
+  end
+
+  @testset "overflow gives Inf, never NaN" begin
+    # K_ν finite but K_{ν+1} (needed internally) beyond floatmax
+    ν, z = 82.47797718461617 + 0.06650902909717046im, -0.011113380500254271 + 0.004035924914047084im
+    @test besselk(ν, z) ≈ -1.5978706850528e305 + 6.953890020002e304im rtol = 1e-12
+    k1 = besselk(ν + 1, z)                     # mpmath: 2.4267e309 - 1.48990234827458864e308im
+    @test real(k1) == Inf
+    @test imag(k1) ≈ -1.48990234827458864e308 rtol = 1e-10
+    d = besselk(ν, Dual(z, one(z)))
+    @test !isnan(realpart(d)) && !isnan(dualpart(d))
+    # value beyond floatmax: Inf in the right quadrant (mpmath phase 1.229)
+    k = besselk(300.0 + 1im, 0.01 + 0.01im)
+    @test real(k) == Inf && imag(k) == Inf
+    @test !any(isnan, reim(dualpart(besselk(Dual(300.0 + 1im, 1.0 + 0im), 0.01 + 0.01im))))
+    @test besselk(Dual(300.0, 1.0), 0.01) == Dual(Inf, Inf)
+    # unscaling with huge |Re z|: scaled value finite, unscaled overflows/underflows cleanly
+    @test isfinite(besselkx(0.3 + 0.2im, -800.0 + 1im))
+    k = besselk(0.3 + 0.2im, -800.0 + 1im)
+    @test isinf(real(k)) && isinf(imag(k)) && !isnan(real(k))
+    @test besselk(0.3 + 0.2im, 800.0 + 1im) == 0
+  end
+
+  @testset "type stability" begin
+    νs = (0.3 + 0.4im, 2.0 + 0im, Dual(0.3 + 0.4im, 1.0 + 0im), Dual(1.5, 1.0), 1.5, 2)
+    zs = (1.5, 2, 1.5 + 0.5im, -3.0 + 1im, Dual(1.5, 1.0), Dual(1.5 + 0.5im, 1.0 + 0im),
+      1.5f0 + 0.5f0im)
+    for ν in νs, z in zs, f in (besselk, besselkx)
+      (ν isa Real && !(z isa Dual)) && continue   # plain SpecialFunctions
+      @test (@inferred f(ν, z)) isa Number
+    end
+    # real Dual order with real argument is real, and rejects negative arguments
+    @test besselk(Dual(1.5, 1.0), 2.0) isa Dual{Float64}
+    @test besselk(Dual(1.5, 1.0), Dual(2.0, 1.0)) isa Dual{Float64}
+    @test_throws DomainError besselk(Dual(1.5, 1.0), -2.0)
+    @test besselk(Dual(1.5, 1.0), -2.0 + 0im) isa Dual{ComplexF64}
+    @test (@inferred besselk_v([0.3 + 0.4im, 1.0 + 2im], 1.0 + 1im)) isa Vector{ComplexF64}
+    @test (@inferred besselk_v([Dual(0.3, 1.0)], 1.0)) isa Vector{Dual{Float64}}
   end
 
   @testset "edge cases" begin
