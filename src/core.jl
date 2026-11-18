@@ -191,25 +191,51 @@ besselkx(ν::Dual{<:Real}, z::_RealOrRealDual) = _besselk_realdual(ν, z, true)
 besselkx(ν::Real, z::Dual) = _besselk_real_order_dual(ν, z, true)
 
 function _besselk_complex_order(ν::Complex, z, scaled::Bool)
-  if iszero(imag(ν))       # real order: SpecialFunctions (AMOS) is accurate everywhere
+  if iszero(imag(ν))       # real order: fast large-|z| path, else SpecialFunctions (AMOS)
     νr = Float64(real(ν))
     z isa Dual && return _besselk_real_order_dual(νr, _cplx(z), scaled)
-    zc = ComplexF64(z)
-    return scaled ? besselkx(νr, zc) : besselk(νr, zc)
+    return _besselk_real_order(νr, ComplexF64(z), scaled)
   end
   return _besselk_general(ν, z, scaled)
 end
 
-# real order, Dual argument: values from SpecialFunctions, derivative from
+# real order, complex argument
+function _besselk_real_order(ν::Float64, z::ComplexF64, scaled::Bool)
+  kx, _, ok = _kx_fast(ν, z, Val(false))
+  ok && return scaled ? kx : kx * exp(-z)        # Re z >= 0 here: no overflow
+  return scaled ? besselkx(ν, z) : besselk(ν, z)
+end
+
+# Integer orders with a ComplexF64 argument get the fast path too. (A Float64 order with a
+# ComplexF64 argument matches a concrete SpecialFunctions method, which can't be replaced
+# without overwriting it.)
+besselk(ν::Integer, z::ComplexF64) = _besselk_real_order(Float64(ν), z, false)
+besselkx(ν::Integer, z::ComplexF64) = _besselk_real_order(Float64(ν), z, true)
+
+# real order, Dual argument. Large |z|: value and derivative from the fast expansion.
+# Otherwise values from SpecialFunctions and the derivative from
 #   K_ν' = -(K_{ν-1} + K_{ν+1})/2,   (e^z K_ν)' = e^z K_ν - e^z (K_{ν-1} + K_{ν+1})/2
 function _besselk_real_order_dual(ν::Real, z::Dual, scaled::Bool)
   z0 = float(realpart(z))
+  kx, dkx, ok = _kx_fast(Float64(ν), ComplexF64(z0), Val(true))
+  if ok
+    if scaled
+      k, dk = kx, dkx
+    else
+      ez = exp(-ComplexF64(z0))
+      k, dk = kx * ez, (dkx - kx) * ez             # d/dz (e^{-z} Kx) = e^{-z}(Kx' - Kx)
+    end
+    return Dual(_like(k, z0), _mulsafe(_like(dk, z0), dualpart(z)))
+  end
   f = scaled ? besselkx : besselk
   k = f(ν, z0)
   dk = -(f(ν - 1, z0) + f(ν + 1, z0)) / 2
   scaled && (dk += k)
   return Dual(k, _mulsafe(dk, dualpart(z)))
 end
+# a real argument gives a real result (the fast path only runs for z0 >= 0)
+_like(x::Complex, ::Real) = real(x)
+_like(x::Complex, ::Complex) = x
 
 """
     besselk_v(ν::AbstractVector, z)

@@ -4,6 +4,8 @@ Random.seed!(0)
 
 # (ν, z, K_ν(z), ∂K_ν(z)/∂ν) from mpmath at 40 digits
 include("reference_values.jl")
+# (ν, z, e^z K_ν(z), d/dz e^z K_ν(z)) for real ν, large |z|, from mpmath
+include("reference_fast.jl")
 
 @testset "GeneralBesselk" begin
   @testset "complex order vs mpmath" begin
@@ -142,12 +144,56 @@ include("reference_values.jl")
     @test besselk(0.3 + 0.2im, 800.0 + 1im) == 0
   end
 
+  @testset "fast large-|z| path for real orders" begin
+    # against mpmath, including the scaled derivative (which AMOS-based formulas can only
+    # get by cancellation)
+    nfast = 0
+    for (ν, z, kx, dkx) in REFERENCE_FAST
+      f, d, ok = G._kx_fast(ν, z, Val(true))
+      ok || continue
+      nfast += 1
+      @test f ≈ kx rtol = 2e-15
+      @test d ≈ dkx rtol = 1e-13
+      # public paths that use it (equal up to FMA contraction differences when inlined)
+      r = besselkx(ν, Dual(z, one(z)))
+      @test realpart(r) ≈ f rtol = 1e-15
+      @test dualpart(r) ≈ d rtol = 1e-15
+      @test besselkx(ν + 0im, z) ≈ f rtol = 1e-15
+      isinteger(ν) && @test besselkx(Int(ν), z) ≈ f rtol = 1e-15
+    end
+    @test nfast > 400
+    # against AMOS on random points: values, and the unscaled derivative (no cancellation)
+    for _ in 1:2000
+      ν = rand((2, 3, rand(-10:10), 40 * (rand() - 0.5)))
+      z = ComplexF64((15 + 600rand()^2) * cis((rand() - 0.5) * π))
+      G._kx_fast(Float64(ν), z, Val(false))[3] || continue
+      @test besselkx(ν + 0im, z) ≈ besselkx(Float64(ν), z) rtol = 2e-15
+      @test besselk(ν + 0im, z) ≈ besselk(Float64(ν), z) rtol = 4e-15      # + rounding in e^{-z}
+      ν isa Integer && @test besselk(ν, z) ≈ besselk(Float64(ν), z) rtol = 4e-15
+      d = besselk(Float64(ν), Dual(z, one(z)))
+      @test dualpart(d) ≈ -(besselk(ν - 1.0, z) + besselk(ν + 1.0, z)) / 2 rtol = 1e-14
+    end
+    # acceptance: ν = 2 from |z| ≈ 22, never for Re z < 0, small |z| or 0; the threshold
+    # rises with the order
+    @test G._kx_fast(2.0, 25.0 + 0im, Val(false))[3]
+    @test !G._kx_fast(2.0, 15.0 + 0im, Val(false))[3]
+    @test !G._kx_fast(2.0, -100.0 + 1im, Val(false))[3]
+    @test !G._kx_fast(30.0, 100.0 + 0im, Val(false))[3]
+    @test !G._kx_fast(2.0, 0.0im, Val(false))[3]
+    # integer table and the general recurrence agree
+    @test G._HANKEL_INT[4] == G._hankel_coeffs(36.0)
+    # real Dual argument stays real on the fast path
+    @test besselk(2, Dual(30.0, 1.0)) isa Dual{Float64}
+    @test dualpart(besselk(2, Dual(30.0, 1.0))) ≈ -(besselk(1, 30.0) + besselk(3, 30.0)) / 2 rtol = 1e-14
+  end
+
   @testset "type stability" begin
     νs = (0.3 + 0.4im, 2.0 + 0im, Dual(0.3 + 0.4im, 1.0 + 0im), Dual(1.5, 1.0), 1.5, 2)
-    zs = (1.5, 2, 1.5 + 0.5im, -3.0 + 1im, Dual(1.5, 1.0), Dual(1.5 + 0.5im, 1.0 + 0im),
-      1.5f0 + 0.5f0im)
+    zs = (1.5, 2, 1.5 + 0.5im, -3.0 + 1im, 40.0 + 3im, Dual(1.5, 1.0), Dual(40.0, 1.0),
+      Dual(1.5 + 0.5im, 1.0 + 0im), Dual(40.0 + 3im, 1.0 + 0im), 1.5f0 + 0.5f0im)
     for ν in νs, z in zs, f in (besselk, besselkx)
-      (ν isa Real && !(z isa Dual)) && continue   # plain SpecialFunctions
+      (ν isa AbstractFloat && !(z isa Dual)) && continue   # plain SpecialFunctions
+      (ν isa Integer && !(z isa Union{Dual,ComplexF64})) && continue
       @test (@inferred f(ν, z)) isa Number
     end
     # real Dual order with real argument is real, and rejects negative arguments

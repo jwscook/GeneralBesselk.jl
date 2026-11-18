@@ -28,3 +28,21 @@ with open("reference_values.jl", "w") as f:
         f.write("  (" + ", ".join("complex(%r, %r)" % (x.real, x.imag) for x in (nu, z, K, dK)) + "),\n")
     f.write("]\n")
 print(len(rows))
+
+# reference_fast.jl: real orders at large |z| (the fast Hankel path), with the derivative
+def gen_fast(n=500):
+    random.seed(99)
+    mp.mp.dps = 30
+    with open("reference_fast.jl", "w") as f:
+        f.write("const REFERENCE_FAST = [\n")
+        for i in range(n):
+            nu = random.choice([2, 3, random.randint(-10, 10), random.uniform(-40, 40)])
+            r = math.exp(random.uniform(math.log(15), math.log(1e4))) if i % 2 else random.uniform(18, 60)
+            z = cmath.rect(r, random.uniform(-0.5, 0.5) * math.pi)
+            w = mp.mpc(z)
+            kx = mp.exp(w) * mp.besselk(nu, w)
+            dkx = kx - mp.exp(w) * (mp.besselk(nu - 1, w) + mp.besselk(nu + 1, w)) / 2
+            f.write("  (%r, complex(%r, %r), complex(%r, %r), complex(%r, %r)),\n" % (
+                float(nu), z.real, z.imag, float(kx.real), float(kx.imag), float(dkx.real), float(dkx.imag)))
+        f.write("]\n")
+gen_fast()

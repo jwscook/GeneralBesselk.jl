@@ -16,6 +16,7 @@ include("temme.jl")
 include("cf.jl")
 include("series.jl")
 include("asym.jl")
+include("fastasym.jl")
 include("core.jl")
 
 end # module GeneralBesselk

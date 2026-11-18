@@ -31,9 +31,9 @@ tests. Computation is in `Float64`, and the result type depends only on the argu
   otherwise); pass a complex argument for the other side of the cut;
 * otherwise the result is `ComplexF64` or `Dual{ComplexF64}`.
 
-Real (non-Dual) orders go straight to SpecialFunctions, including a complex `ν` with zero
-imaginary part. On the negative real axis the sign of `imag(z)`, including a signed zero,
-picks the side of the cut.
+Real (non-Dual) orders go to SpecialFunctions, except at large |z| (see below). This
+includes a complex `ν` with zero imaginary part. On the negative real axis the sign of
+`imag(z)`, including a signed zero, picks the side of the cut.
 
 ## Method
 
@@ -66,6 +66,23 @@ correct quadrant (or 0), never `NaN`. Intermediate quantities that overflow, suc
 K_{ν+1} when only K_ν is wanted, do not affect the result. `besselkx` stays finite where
 `besselk` over- or underflows because of `e^{−z}`.
 
+**Fast path for real orders at large |z|.** For real ν and `Re z ≥ 0`, a fixed-length
+Hankel series is evaluated with `evalpoly` and no per-term branches. Its 12 or 24 real
+coefficients come from a table for integer |ν| ≤ 16, or from their recurrence otherwise.
+A single check on the first neglected term then decides whether the truncation error is
+below eps (for real ν and |arg z| ≤ π/2 the remainder is bounded by that term). If not,
+the call falls back to AMOS. The fast path accepts |z| ≳ 22 for |ν| ≲ 10, and the
+threshold rises with |ν|. The z-derivative comes from the same coefficients in closed
+form, replacing three AMOS calls. It is used by:
+
+* `besselk(ν::Integer, z::ComplexF64)` and `besselkx(ν::Integer, z::ComplexF64)`,
+* complex orders with zero imaginary part,
+* every real order with a `Dual` argument.
+
+A `Float64` order with a plain `ComplexF64` argument matches an existing SpecialFunctions
+method exactly, and that method can't be replaced without overwriting it. Pass an integer
+order, or `ν + 0im`, to get the fast path.
+
 ## Accuracy
 
 Compared with mpmath on 490 stored reference values (`test/`) and two independent random
@@ -73,7 +90,9 @@ sets of 3000 and 1800 points (|ν| up to ~150, |Im ν| up to ~100, |z| from 0.01
 including points within 1e-12 of the branch cut):
 
 * median relative error ~1e-15, 99th percentile ~1e-13, for values, ∂K/∂z and ∂K/∂ν;
-* real orders agree with SpecialFunctions (AMOS) to ~1e-13.
+* real orders agree with SpecialFunctions (AMOS) to ~1e-13;
+* the large-|z| real-order fast path: values ~1e-15 and z-derivatives ~1e-14 against
+  mpmath (500 stored points in `test/reference_fast.jl`).
 
 **Limitation:** about 0.3% of those random points lose accuracy. All of them combine
 |Im ν| ≳ 8, z in the left half-plane near the imaginary axis, and |z| ≳ 30, where every
@@ -84,8 +103,12 @@ complete loss of accuracy at the extremes (|Im ν| ≈ 20–30, |z| ≈ 80–150
 
 Calls don't allocate. On the 3000-point random set the median is ~1.3 μs (~3 μs with a
 Dual order or argument), the 99th percentile ~20 μs (~60 μs), and the maximum ~30 μs
-(~95 μs). This is a few times slower than AMOS for comparable real-order calls. Iteration
-counts are capped, so no input can trigger an unbounded or arbitrary-precision computation.
+(~95 μs). Iteration counts are capped, so no input can trigger an unbounded or
+arbitrary-precision computation.
+
+On the fast path (real order, |z| ≳ 22, Re z ≥ 0): ~45–55 ns for a value and ~65–90 ns
+with a Dual argument, against ~300–550 ns and ~1.1–1.4 μs through AMOS. Its values agree
+with mpmath to ~1e-15, and its derivatives to ~1e-14.
 
 ## Notes
 
