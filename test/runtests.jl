@@ -154,10 +154,11 @@ include("reference_fast.jl")
       nfast += 1
       @test f ≈ kx rtol = 2e-15
       @test d ≈ dkx rtol = 1e-13
-      # public paths that use it (equal up to FMA contraction differences when inlined)
+      # public paths that use it (the Dual path may pick the longer tier, so compare it
+      # with mpmath directly)
       r = besselkx(ν, Dual(z, one(z)))
-      @test realpart(r) ≈ f rtol = 1e-15
-      @test dualpart(r) ≈ d rtol = 1e-15
+      @test realpart(r) ≈ kx rtol = 2e-15
+      @test dualpart(r) ≈ dkx rtol = 1e-13
       @test besselkx(ν + 0im, z) ≈ f rtol = 1e-15
       isinteger(ν) && @test besselkx(Int(ν), z) ≈ f rtol = 1e-15
     end

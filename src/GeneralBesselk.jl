@@ -18,5 +18,6 @@ include("series.jl")
 include("asym.jl")
 include("fastasym.jl")
 include("core.jl")
+include("derivs.jl")
 
 end # module GeneralBesselk

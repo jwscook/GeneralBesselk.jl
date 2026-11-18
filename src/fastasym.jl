@@ -54,3 +54,42 @@ end
 end
 @inline _pow2n(q, ::Val{12}) = (q2 = q * q; q4 = q2 * q2; q8 = q4 * q4; q8 * q4)
 @inline _pow2n(q, ::Val{24}) = (q2 = q * q; q4 = q2 * q2; q8 = q4 * q4; q16 = q8 * q8; q16 * q8)
+
+# ---- with the order derivative as well ----
+# d/dν of r_k = (4ν² - (2k-1)²)/(8k) is ν/k, so by the product rule
+#   a'_{k+1} = a'_k r_{k+1} + a_k ν/(k+1),
+# with no divisions (fine at half-integer ν, where some r_k vanish), and
+#   ∂/∂ν e^z K_ν(z) ≈ sqrt(π/(2z)) Σ_k a'_k(ν) w^k.
+const _INVK = ntuple(k -> 1.0 / k, 24)
+
+@inline function _hankel_coeffs_dν(ν::Float64)
+  μ4 = 4ν * ν
+  Base.Cartesian.@nexprs 24 k -> r_k = (μ4 - _ODDSQ[k]) * _INV8K[k]
+  a_1 = r_1
+  da_1 = ν
+  Base.Cartesian.@nexprs 23 k -> begin
+    a_{k + 1} = a_k * r_{k + 1}
+    da_{k + 1} = muladd(da_k, r_{k + 1}, a_k * (ν * _INVK[k + 1]))
+  end
+  return (Base.Cartesian.@ntuple 24 k -> a_k), (Base.Cartesian.@ntuple 24 k -> da_k)
+end
+
+# (e^z K_ν, ∂/∂ν e^z K_ν, ∂/∂z e^z K_ν, accepted)
+@inline function _kx_fast_dν(ν::Float64, z::ComplexF64)
+  a, da = _hankel_coeffs_dν(ν)
+  if abs2(z) >= 3600.0
+    r = _kx_fast_dν_n(a, da, z, Val(12))
+    r[4] && return r
+  end
+  return _kx_fast_dν_n(a, da, z, Val(24))
+end
+
+@inline function _kx_fast_dν_n(a, da, z::ComplexF64, ::Val{N}) where {N}
+  kx, kxz, ok = _kx_fast_n(a, z, Val(N), Val(true))
+  w = inv(z)
+  sν = w * @inline evalpoly(w, ntuple(k -> da[k], Val(N - 1)))
+  # same truncation test for the order derivative (ν = 0: all a'_k = 0, accepted)
+  l1 = abs(real(sν)) + abs(imag(sν))
+  okν = (N * da[N])^2 * _pow2n(abs2(w), Val(N)) <= (0.5eps() * l1)^2
+  return kx, sqrt(π / 2 * w) * sν, kxz, ok & okν
+end

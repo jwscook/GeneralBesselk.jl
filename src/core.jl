@@ -110,15 +110,19 @@ function _besselk_general(ν, z::Number, scaled::Bool)
   return _assemble(k0, e, zc, scaled)
 end
 
-# Dual argument. Derivative from the symmetric form
+# Value and z-derivative at a plain complex z for complex (possibly Dual) ν with Re ν >= 0:
+# (K, dK/dz) or, if scaled, (e^z K, d(e^z K)/dz). K carries ∂/∂ν when ν is Dual; the
+# z-derivative is plain (only the value of ν enters it). With needz = false only the
+# value is computed. The derivative uses the symmetric form
 #   dK_ν/dz = -(K_{ν-1} + K_{ν+1})/2,   d(e^z K_ν)/dz = e^z K_ν - e^z (K_{ν-1} + K_{ν+1})/2,
 # with K_{ν-1} computed independently: no cancellation for real ν and z > 0, and better
 # conditioned than (ν/z) K_ν - K_{ν+1} for complex arguments.
-function _besselk_general(ν, z::Dual, scaled::Bool)
-  νc = _cplx(ν)
-  real(_val(νc)) < 0 && (νc = -νc)
-  z0 = ComplexF64(realpart(z))
-  iszero(z0) && return Dual(_kinf(νc), _kinf(νc)) + zero(νc)
+function _kz_parts(νc, z0::ComplexF64, scaled::Bool, needz::Bool)
+  iszero(z0) && return _kinf(νc), complex(-Inf, 0.0)
+  if !needz
+    k0, _, _, e = _kx_pair(νc, z0, false)
+    return _assemble(k0, e, z0, scaled), zero(ComplexF64)
+  end
   k0, k1, ep, e = _kx_pair(νc, z0, true)
   νm = _val(νc) - 1                              # only the value of ν matters here
   real(νm) < 0 && (νm = -νm)                     # K_{ν-1} = K_{1-ν}
@@ -134,9 +138,7 @@ function _besselk_general(ν, z::Dual, scaled::Bool)
   err_rec = (abs(c) + abs(b)) * ep / abs(c - b)
   err_rec < err_sym && (d = c - b)
   scaled && (d += _ldexp(_val(k0), e - E))
-  k = _assemble(k0, e, z0, scaled)
-  dk = _mulsafe(_assemble(d, E, z0, scaled), dualpart(z))
-  return k isa Dual ? Dual(realpart(k), dualpart(k) + dk) : Dual(k, dk)
+  return _assemble(k0, e, z0, scaled), _assemble(d, E, z0, scaled)
 end
 
 _kinf(ν) = complex(Inf, 0.0) + zero(ν)
@@ -148,14 +150,6 @@ _mulsafe(a, b) = a * b
 
 _realify(x::Complex) = real(x)
 _realify(x::Dual) = Dual(real(realpart(x)), real(dualpart(x)))
-
-# real Dual order with a real (or real Dual) argument: the result is real, like
-# SpecialFunctions' besselk(::Real, ::Real), which also rejects negative arguments
-function _besselk_realdual(ν::Dual, z, scaled::Bool)
-  real(_val(z)) < 0 && throw(DomainError(_val(z),
-    "a real argument must be non-negative; pass a complex argument instead"))
-  return _realify(_besselk_general(ν, z, scaled))
-end
 
 const _RealOrRealDual = Union{Real,Dual{<:Real}}
 
@@ -175,9 +169,9 @@ The result is real (`Float64` or `Dual{Float64}`) when the order and the argumen
 both real, and complex otherwise. Computation is in `Float64`.
 """
 besselk(ν::Complex, z::Number) = _besselk_complex_order(ν, z, false)
-besselk(ν::Dual, z::Number) = _besselk_general(ν, z, false)
-besselk(ν::Dual{<:Real}, z::_RealOrRealDual) = _besselk_realdual(ν, z, false)
-besselk(ν::Real, z::Dual) = _besselk_real_order_dual(ν, z, false)
+besselk(ν::Dual, z::Number) = _dn_besselk(ν, z, false)
+besselk(ν::Dual{<:Real}, z::_RealOrRealDual) = _dn_real(ν, z, false)
+besselk(ν::Real, z::Dual) = _dn_realorder(ν, z, false)
 
 """
     besselkx(ν, z)
@@ -186,15 +180,23 @@ Scaled modified Bessel function of the second kind, e^z K_ν(z). Accepts the sam
 argument types as [`besselk`](@ref).
 """
 besselkx(ν::Complex, z::Number) = _besselk_complex_order(ν, z, true)
-besselkx(ν::Dual, z::Number) = _besselk_general(ν, z, true)
-besselkx(ν::Dual{<:Real}, z::_RealOrRealDual) = _besselk_realdual(ν, z, true)
-besselkx(ν::Real, z::Dual) = _besselk_real_order_dual(ν, z, true)
+besselkx(ν::Dual, z::Number) = _dn_besselk(ν, z, true)
+besselkx(ν::Dual{<:Real}, z::_RealOrRealDual) = _dn_real(ν, z, true)
+besselkx(ν::Real, z::Dual) = _dn_realorder(ν, z, true)
+
+# real order and real argument (either may be a Dual): real result
+function _dn_real(ν, z, scaled::Bool)
+  _check_real_domain(_val(z))
+  return _realify(_dn_besselk(ν, z, scaled))
+end
+# real (non-Dual) order, Dual argument: real result iff the argument is real
+_dn_realorder(ν::Real, z::Dual{<:Real}, scaled::Bool) = _dn_real(ν, z, scaled)
+_dn_realorder(ν::Real, z::Dual, scaled::Bool) = _dn_besselk(ν, z, scaled)
 
 function _besselk_complex_order(ν::Complex, z, scaled::Bool)
+  z isa Dual && return _dn_besselk(ComplexF64(ν), _cplx(z), scaled)   # derivative core
   if iszero(imag(ν))       # real order: fast large-|z| path, else SpecialFunctions (AMOS)
-    νr = Float64(real(ν))
-    z isa Dual && return _besselk_real_order_dual(νr, _cplx(z), scaled)
-    return _besselk_real_order(νr, ComplexF64(z), scaled)
+    return _besselk_real_order(Float64(real(ν)), ComplexF64(z), scaled)
   end
   return _besselk_general(ν, z, scaled)
 end
@@ -211,31 +213,6 @@ end
 # without overwriting it.)
 besselk(ν::Integer, z::ComplexF64) = _besselk_real_order(Float64(ν), z, false)
 besselkx(ν::Integer, z::ComplexF64) = _besselk_real_order(Float64(ν), z, true)
-
-# real order, Dual argument. Large |z|: value and derivative from the fast expansion.
-# Otherwise values from SpecialFunctions and the derivative from
-#   K_ν' = -(K_{ν-1} + K_{ν+1})/2,   (e^z K_ν)' = e^z K_ν - e^z (K_{ν-1} + K_{ν+1})/2
-function _besselk_real_order_dual(ν::Real, z::Dual, scaled::Bool)
-  z0 = float(realpart(z))
-  kx, dkx, ok = _kx_fast(Float64(ν), ComplexF64(z0), Val(true))
-  if ok
-    if scaled
-      k, dk = kx, dkx
-    else
-      ez = exp(-ComplexF64(z0))
-      k, dk = kx * ez, (dkx - kx) * ez             # d/dz (e^{-z} Kx) = e^{-z}(Kx' - Kx)
-    end
-    return Dual(_like(k, z0), _mulsafe(_like(dk, z0), dualpart(z)))
-  end
-  f = scaled ? besselkx : besselk
-  k = f(ν, z0)
-  dk = -(f(ν - 1, z0) + f(ν + 1, z0)) / 2
-  scaled && (dk += k)
-  return Dual(k, _mulsafe(dk, dualpart(z)))
-end
-# a real argument gives a real result (the fast path only runs for z0 >= 0)
-_like(x::Complex, ::Real) = real(x)
-_like(x::Complex, ::Complex) = x
 
 """
     besselk_v(ν::AbstractVector, z)

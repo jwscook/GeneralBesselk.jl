@@ -7,14 +7,26 @@ authors = ["James Cook <cookjws@gmail.com>"]
 DualNumbers = "fa6b7ba4-c1ee-5f82-b5fc-ecf0adba8f74"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 
+[weakdeps]
+ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
+ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
+
+[extensions]
+GeneralBesselkChainRulesCoreExt = "ChainRulesCore"
+GeneralBesselkForwardDiffExt = "ForwardDiff"
+
 [compat]
+ChainRulesCore = "1"
 DualNumbers = "0.6"
+ForwardDiff = "0.10, 1"
 SpecialFunctions = "2"
 julia = "1.9"
 
 [extras]
+ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
+ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Random", "Test"]
+test = ["ChainRulesCore", "ForwardDiff", "Random", "Test"]
